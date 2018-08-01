@@ -21,20 +21,26 @@
 #define LCD_RD A0 
 #define LCD_RESET A4 
 
+//--- CAN-addresses --------------
+
+#define TempAv  0x162
+#define VoltAv  0x165
+#define Speed   0x140   // set addressuna á Dataloggernum úr CAN master skjalinu á drive
+#define VoltMin 0x163
+
 //Variable declaration
 
 const int SPI_CS_PIN = 9;  // SPI chip select pin
 unsigned char RxTxBuf[8];  // data buffer
 int canID;                 // CAN ID of resiving mesage
 union Data{                // Convert char to float
-  char data_buf[4];
-  long mesurement;
+  char data_buf[2];
+  int mesurement;
 };
 String message = "";         // String for serial message
-float send_data[2] ={0, 0};  // stores mesured data befor serial transmit
+float send_data[2] ={0, 0};  // stores measured data before serial transmit
 
 MCP_CAN CAN(SPI_CS_PIN);    // Set CS pin
-
 
 //Function declarations
 
@@ -59,14 +65,10 @@ void power_config();
 #define PURPLE  0x7173
 #define ORANGE  0xFCA3
 
-int speed = 7;
-
 // The screen
 Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 
 void setup(void) {
-
-  //tft.reset();
 
 }
 
@@ -105,36 +107,34 @@ void loop(void) {
   tft.print("Accumulator temperature: ");
 
   // Error svæði
+  /*
   tft.fillRect(250,200,230,120,BLUE);
   tft.setCursor(260,210);
   tft.setTextColor(WHITE);
   tft.print("Error area, will"); 
   tft.setCursor(260,240);
   tft.print("be black/invisible");
-
-  //Komment
-  //tft.setCursor(300,90);
-  //tft.setTextColor(YELLOW);
-  //tft.print("Elding!!!");
-
-  //tft.setCursor(50,240);
-  //tft.print("Pikachu!");
+  */
 
   uint16_t speedColor;
   
   // raunverulegt loop
   while(true){
 
-    if(CAN_MSGAVAIL == CAN.checkReceive())            // check if data coming
-    {
-      CanRead();
+    message = "";      // Empty string for new transmition
+    get_mesurements(); // Saves the mesurements in send_data array
+
+    // Tökum algildi af spennu- og straummælingum.
+    if(send_data[0] < 0){
+      send_data[0]*=(-1);
+    }
+    if(send_data[1] < 0){
+      send_data[1]*=(-1);
     }
     
     // lesa hraða og birta grafískt ásamt tölu.
-    //int speed = random(0,150);
-    if (speed > 140) speed = random(0,150);
-    else speed = speed+1;
-
+    int speed = (int) send_data[1]/10;
+    
     tft.setTextSize(3);
     
     if (speed<50) speedColor = GREEN;
@@ -158,12 +158,14 @@ void loop(void) {
     // Rafhlaðan hefur 144 sellur, hver á að vera 4,15 V.
     // (3.7 V nom 3.3-4.15)
     
-    double cells[144];
-    double totVolt = 0;
-    double minVolt = 10;
+    int cells[144];
+    int totVolt = (int) send_data[1]/10000;
+    
+    //Senda minVolt sérstaklega?
+    int minVolt = 10;
     for (int i = 0; i < 144; i++){
       cells[i] = random(3.0,4.5);
-      totVolt = totVolt + cells[i];
+      //totVolt = totVolt + cells[i];
       if (cells[i] < minVolt) minVolt = cells[i];
     }
     
@@ -199,7 +201,7 @@ void loop(void) {
     else tft.fillRect(346,85,5,10,BLACK);
 
     // Accumulator temperature
-    int temp = random(40,80);
+    int temp = send_data[0];
     tft.fillRect(320,130,35,50,BLACK);
     tft.setTextColor(ORANGE);
     tft.setCursor(320,150);
@@ -215,14 +217,19 @@ void loop(void) {
 // waits for each mesurement and saves it in the send_data array
 void get_mesurements(){
 
-  while(resive_Mesege(RxTxBuf) != CURRENT);   // Waits for current mesurement
-      send_data[0] = convert_data(RxTxBuf);   // Saves mesurement to array
-  
+  if(resive_Mesege(RxTxBuf) == TempAv);      // Waits for current mesurement
+      send_data[0] = convert_data(RxTxBuf);  // Saves mesurement to array
 
-  while(resive_Mesege(RxTxBuf) != VOLTAGE1); 
+  if(resive_Mesege(RxTxBuf) == VoltAv); 
       send_data[1] = convert_data(RxTxBuf);
-  
-}
+
+  if(resive_Mesege(RxTxBur) == Speed);
+      send_data[2] = convert_data(RxTxBuf);
+
+  if(resive_Mesege(RxTxBuf) == VoltMin);
+      send_data[3] = convert_data(RxTxBuf);
+ 
+  }
 
 
 // Stores the 8 byte CAN data in buf
@@ -305,130 +312,5 @@ void reset_buffer(){
     RxTxBuf[caunt] = 0x00;
   }
 }
-
-// Read message from CAN BUS and transmit it over XBee module
-void CanRead() 
-{
-  CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
-  int canId = CAN.getCanId();
-  String nameCanId = nameSender(canId);
-  if( nameCanId != "NA$")                 // if the id is recognized
-    {
-      int nameLength = nameCanId.length();
-      char Idname[nameLength+1];
-      nameCanId.toCharArray(Idname, nameLength+1);
-      // add message
-      // if message is from Powermeter
-      if(canId == 0x521 || canId == 0x524 || canId == 0x525 || canId == 0x526 || canId == 0x528)
-      {
-        union Data Mesurments;
-        Mesurments.data_buf[0] = buf[5];
-        Mesurments.data_buf[1] = buf[4];
-        Mesurments.data_buf[2] = buf[3];
-        Mesurments.data_buf[3] = buf[2];
-      
-        float current = Mesurments.mesurment;
-        if(canId == 0x525)
-        {
-          current = current / 10;
-        }
-          
-        if(current > 10000)   // if data is to large throw it away 
-        {
-          return;
-        }
-        // add message name
-        for(int i = 0; i < nameLength; i++) 
-        {
-          MsgBuff[i+indexBuff] = Idname[i];
-        }
-        indexBuff = indexBuff + nameLength;
-        // add message
-        String tmp = String(current);
-        for(int t = 0; t < tmp.length(); t++) 
-        {
-          MsgBuff[indexBuff+t] = tmp[t];
-        }
-        MsgBuff[indexBuff+tmp.length()] = '$';
-        indexBuff = indexBuff + tmp.length() + 1;
-      }
-      else
-      {
-        // add message name
-        for(int i = 0; i < nameLength; i++) {
-          MsgBuff[i+indexBuff] = Idname[i];
-        }
-        indexBuff = indexBuff + nameLength;
-        // add message
-        for(int j = 0; j < len; j++)
-        {
-          MsgBuff[j+indexBuff] = (char) buf[j];
-        }
-        MsgBuff[indexBuff+len] = '$';
-        indexBuff = indexBuff + len + 1;
-      }
-      xbeeSend(indexBuff);  // send recieved message
-  }
-        /*  Used for debugging writes all recieved CAN messages to Serial
-        Serial.println("-----------------------------");
-        Serial.println("get data from ID: ");
-        Serial.println(canId);
-        for(int i = 0; i<len; i++)    // print the data
-        {
-            Serial.print(buf[i]);
-            Serial.print("\t");
-        }
-        Serial.println();
-        */
-}
-
-// send message of length Msglength over Xbee
-void xbeeSend(int Msglength) {
-    //noInterrupts();
-    /*
-    for(int i = 0; i <= indexBuff; i++) {
-      Serial.print(MsgBuff[i]);
-    }
-    indexBuff = 0;
-    */
-    // start message
-    Serial.print("#");
-    // send message of length Msglength over serial (Xbee)
-    for(int i = 0; i < Msglength; i++) {
-      Serial.print(MsgBuff[i]);
-    }
-    // Delete sent message from buffer
-    for(int j = 0; j < Msglength && j < 50-Msglength; j++) {
-      MsgBuff[j] = MsgBuff[j+Msglength];
-    }
-    indexBuff = indexBuff-Msglength;
-    //Serial.println();
-    //interrupts();
-}
-
-// Used to identify revieced CAN message to transmit over XBee
-String nameSender(int canID) {
-  switch(canID) {
-    case 0x01:
-      return "Volt$";
-    case 0x02:
-      return "Ohm$";
-    case 0x03:
-      return "Amp$";
-    case 0x521:
-      return "PCurrent$";
-    case 0x524:
-      return "PVolt$";
-    case 0x525:
-      return "PTemp$";
-    case 0x526:
-      return "PPower$";
-    case 0x528:
-      return "PTotEner$";
-    default:
-      return "NA$";
-  }
-}
-
 
 
