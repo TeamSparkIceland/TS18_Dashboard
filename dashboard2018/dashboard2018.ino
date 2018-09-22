@@ -21,24 +21,26 @@
 #define LCD_RESET A4
 
 //--- CAN-addresses --------------
-
 #define TempAv  0x162
 #define TempMax 0x161
-#define VoltAv  0x165
 #define Speed   0x140   // set addressuna á Dataloggernum úr CAN master skjalinu á drive
-#define VoltMin 0x163
+#define VoltMin 0x165
 #define VoltTOT 0x166
 
 //Variable declaration
 
-const int SPI_CS_PIN = 9;  // SPI chip select pin
+const int SPI_CS_PIN = 10;  // SPI chip select pin
 unsigned char len = 0;
 unsigned char buf[8];  // data buffer
 int canID;                 // CAN ID of resiving mesage
 union Data_int {               // Convert char to float
   char buf[2];
-  int data;
+  unsigned int data;
 } data_int;
+union Data_long {
+  char buf[4];
+  long data;
+} data_long;
 union Data_float {
   char buf[4];
   float data;
@@ -52,8 +54,8 @@ MCP_CAN CAN(SPI_CS_PIN);    // Set CS pin
 
 int resieve_Mesege(char buf[8]);
 float convert_data(char buf[8]);
-void reset_buffer();
-void power_config();
+//void reset_buffer();
+//void power_config();
 
 
 // Assign human-readable names to some common 16-bit color values:
@@ -78,7 +80,14 @@ void setup(void) {
   // 480x320   Change in Adafruit_TFTLCD.cpp
 
   // Raunverulegt setup
-  //Serial.begin(115200);
+  Serial.begin(115200);
+
+  while ( CAN_OK != CAN.begin(CAN_500KBPS) ) { // should be CAN.begin(CAN_1000KBPS)) {  but because of Power meter its 500
+    delay(1);
+    //Serial.println("CAN not initialized");
+  }
+  Serial.println("CAN initialized");
+
   delay(100);
   identifier = tft.readID();
   identifier = 0x9341; //0x9341;
@@ -106,62 +115,79 @@ void setup(void) {
   tft.setTextColor(WHITE);
   tft.setCursor(80, 30);
   tft.print("Min Voltage: ");
-  tft.setCursor(80, 50);
+  tft.setCursor(80, 60);
   tft.print("Total Voltage: ");
 
   // hitatexti
   //tft.setTextColor(ORANGE);
-  tft.setCursor(200, 30);
+  tft.setCursor(80, 90);
   tft.print("Max Temperature: ");
 
+  tft.setCursor(80, 120);
+  tft.print("Speed: ");
 
 }
 
+float minV = 0;
+float totalV = 0;
+int maxT = 0;
+float gps_speed = 0;
 
 void loop(void) {
+  while(true) {
+  long timer = millis();
+  while ( millis() - timer < 500 ) { // read CAN for 500ms
+    while (CAN_MSGAVAIL != CAN.checkReceive() ) {
+    }
+    int id = read_CAN();
+    if( id == TempMax || id == VoltMin || id == VoltTOT ) {
+    Serial.print("CAN id: ");
+    Serial.println(id,HEX);
+    }
 
-  while ( CAN_MSGAVAIL != CAN.checkReceive() ) {
+    switch (id) {
+      case TempMax:
+        data_int.buf[0] = buf[0];
+        data_int.buf[1] = buf[1];
+        maxT = data_int.data;
+        break;
+      case VoltMin:
+        data_int.buf[0] = buf[0];
+        data_int.buf[1] = buf[1];
+        minV = (float) data_int.data / 10000.0;
+        break;
+      case VoltTOT:
+        data_long.buf[0] = buf[0];
+        data_long.buf[1] = buf[1];
+        data_long.buf[2] = buf[2];
+        data_long.buf[3] = buf[3];
+        totalV = (float) data_long.data / 10000.0;
+        break;
+      case Speed:
+        data_int.buf[0] = buf[0];
+        data_int.buf[1] = buf[1];
+        gps_speed = (float) data_int.data / 100.0;
+    }
   }
-  int id = read_CAN();
-  switch (id) {
-    case TempMax:
-      //tft.fillRect(250,45,240,30,BLACK);
-      tft.setCursor(240, 30);
-      data_int.buf[0] = buf[0];
-      data_int.buf[1] = buf[1];
-      tft.print(data_int.data);
-      break;
-    case VoltMin:
-      //tft.fillRect(140,45,120,30,BLACK);
-      tft.setCursor(120, 30);
-      data_float.buf[0] = buf[0];
-      data_float.buf[1] = buf[1];
-      data_float.buf[2] = buf[2];
-      data_float.buf[3] = buf[3];
-      tft.print(data_float.data);
-      break;
-    case VoltTOT:
-      //tft.fillRect(140,65,130,50,BLACK);
-      tft.setCursor(130, 50);
-      data_float.buf[0] = buf[0];
-      data_float.buf[1] = buf[1];
-      data_float.buf[2] = buf[2];
-      data_float.buf[3] = buf[3];
-      tft.print(data_float.data);
-      break;
+
+  // Update screen
+  
+  tft.fillRect(285,90,80,15,BLACK);
+  tft.setCursor(290, 90);
+  tft.print(maxT);
+  tft.fillRect(285,30,80,15,BLACK);
+  tft.setCursor(290, 30);
+  tft.print(minV);
+  tft.fillRect(285, 60, 80, 15, BLACK);  // fillRect( x1, y1, x2 width, y2 height downwards)
+  //tft.setTextColor(WHITE);
+  tft.setCursor(290, 60);    // setCursor(x1, y1)
+  tft.print(totalV);
+  
+  tft.fillRect(285, 120, 80, 15, BLACK);  // fillRect( x1, y1, x2 width, y2 height downwards)
+  //tft.setTextColor(WHITE);
+  tft.setCursor(290, 120);    // setCursor(x1, y1)
+  tft.print(gps_speed);
   }
-
-#define TempAv  0x162
-#define TempMax 0x161
-#define VoltAv  0x165
-#define Speed   0x140   // set addressuna á Dataloggernum úr CAN master skjalinu á drive
-#define VoltMin 0x163
-#define VoltTOT 0x166
-
-
-
-  //Serial.print("Identifier: ");
-  //Serial.println(identifier);
 }
 
 
